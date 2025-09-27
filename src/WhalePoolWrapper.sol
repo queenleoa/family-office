@@ -11,7 +11,7 @@ import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
-import {IPythOracleManager} from "IPythOracleManager.sol";
+import {IPythOracleManager} from "./IPythOracleManager.sol";
 
 contract WhalePoolWrapper is BaseHook {
     using PoolIdLibrary for PoolKey;
@@ -158,7 +158,7 @@ contract WhalePoolWrapper is BaseHook {
     }
 
     /// @notice Swap PYUSD for ETH using pool
-    function _swapPYUSDForETH(uint256 pyusdAmount) internal returns (uint256) {
+    function _swapPYUSDForETH(uint256 pyusdAmount) internal view returns (uint256) {
         // Implementation would use PoolManager swap
         // For POC, using oracle price simulation
         uint256 ethPrice = pythOracle.getETHPrice();
@@ -290,7 +290,7 @@ contract WhalePoolWrapper is BaseHook {
     }
 
     // Placeholder functions for POC
-    function _getCurrentTick() internal view returns (int24) {
+    function _getCurrentTick() internal pure returns (int24) {
         // Would get from pool state
         return 0;
     }
@@ -314,7 +314,7 @@ contract WhalePoolWrapper is BaseHook {
         // Remove all positions for rebalancing
     }
 
-    function _collectAllFees() internal returns (uint256) {
+    function _collectAllFees() internal pure returns (uint256) {
         // Collect fees from all positions
         return 0;
     }
@@ -345,7 +345,7 @@ contract WhalePoolWrapper is BaseHook {
         pendingRewards = info.pendingRewards;
     }
 
-    function _calculateAPY() internal view returns (uint256) {
+    function _calculateAPY() internal pure returns (uint256) {
         // Calculate based on fees collected vs time
         return 1200; // 12% APY placeholder
     }
