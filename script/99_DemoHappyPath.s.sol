@@ -14,6 +14,16 @@ import {StdCheats} from "forge-std/StdCheats.sol";
 import {ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {EasyPosm} from "../test/utils/libraries/EasyPosm.sol";
+import {IPositionManager} from "@uniswap/v4-periphery/src/interfaces/IPositionManager.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
+
+
+interface IWETH {
+    function deposit() external payable;
+    function approve(address spender, uint256 value) external returns (bool);
+}
 
 contract DemoHappyPathScript is BaseScript, StdCheats {
     address constant PYUSD = 0x6c3ea9036406852006290770BEdFcAbA0e23A0e8;
@@ -28,8 +38,9 @@ contract DemoHappyPathScript is BaseScript, StdCheats {
     }
 
     function run() external {
+        
         // Setup wrapper (use deployed address)
-        wrapper = WhalePoolWrapper(0xa365f75b072CF8BA95e6A27A9E1f94038dCB9A00); // Replace with deployed address
+        wrapper = WhalePoolWrapper(0x1a5Ca1a4E69D0682cdF300a4bdF8F2d22928DA00); // Replace with deployed address
 
         // Create pool key
         Currency currency0 = Currency.wrap(PYUSD < WETH ? PYUSD : WETH);
@@ -106,27 +117,31 @@ contract DemoHappyPathScript is BaseScript, StdCheats {
  function addTinyLiquiditySim(PoolKey memory key) internal {
     address actor = BROADCASTER;
 
-    // seed balances in SIMULATION (deal only affects local state)
-    deal(PYUSD, actor, 2_000e6, true);
-    deal(WETH,  actor, 1 ether,  true);
-
-    vm.startPrank(actor);
-    IERC20(PYUSD).approve(address(positionManager), type(uint256).max);
-    IERC20(WETH).approve(address(positionManager),  type(uint256).max);
-
-    // pick a small centered range
+    // ---- Get current tick to place range fully BELOW mid (single-sided WETH) ----
+    (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, PoolIdLibrary.toId(key));
+    int24 currentTick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
     int24 ts = key.tickSpacing;
-    int24 tickLower = -10 * ts;
-    int24 tickUpper =  10 * ts;
 
-    // tiny liquidity; generous max caps (simulation)
-    uint256 liquidity  = 1e12;
-    uint256 amount0Max = type(uint128).max;
-    uint256 amount1Max = type(uint128).max;
+    // range entirely below current → provides only token1 (WETH, since currency1 = WETH here)
+    int24 tickUpper = currentTick - 5 * ts;   // just below spot
+    int24 tickLower = tickUpper - 10 * ts;    // a bit wider below
 
-    uint256 deadline = block.timestamp + 60;
+    // ---- Fund actor with ETH (works on fork), wrap to WETH ----
+    vm.deal(actor, 1 ether); // native ETH
+    vm.startPrank(actor);
+    IWETH(WETH).deposit{value: 0.5 ether}();  // wrap 0.5 ETH → WETH
+    IWETH(WETH).approve(address(positionManager), type(uint256).max);
 
-    // Mint via EasyPosm (forwards hookData to your hook)
+    // Approve PYUSD only if you *really* need it (we don't here, amount0Max=0)
+    // IERC20(PYUSD).approve(address(positionManager), type(uint256).max);
+
+    // ---- Tiny liquidity with only WETH leg ----
+    uint256 liquidity  = 1e12;                // tiny
+    uint256 amount0Max = 0;                   // PYUSD max = 0 (no PYUSD needed)
+    uint256 amount1Max = type(uint128).max;   // allow WETH spend
+    uint256 deadline   = block.timestamp + 60;
+
+    // Recipient = wrapper → “single LP” narrative
     (uint256 tokenId, ) = EasyPosm.mint(
         IPositionManager(address(positionManager)),
         key,
@@ -135,13 +150,12 @@ contract DemoHappyPathScript is BaseScript, StdCheats {
         liquidity,
         amount0Max,
         amount1Max,
-        address(wrapper),          // recipient = wrapper (acts as single LP)
+        address(wrapper),
         deadline,
-        _familyHookData()          // <<< your family tag goes here
+        _familyHookData() // << family tag seen by your hook in beforeAddLiquidity
     );
-
     vm.stopPrank();
 
-    console2.log("Authorized MINT with family tag, tokenId:", tokenId);
+    console2.log("Authorized MINT (single-sided WETH) with family tag, tokenId:", tokenId);
 }
 }

@@ -12,7 +12,6 @@ import {WhalePoolWrapper} from "../src/WhalePoolWrapper.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import "forge-std/console.sol";
 
-
 contract CreateFamilyPoolScript is BaseScript, LiquidityHelpers {
     using CurrencyLibrary for Currency;
     
@@ -21,7 +20,7 @@ contract CreateFamilyPoolScript is BaseScript, LiquidityHelpers {
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     
     // Replace with your deployed hook address
-    address constant WHALE_WRAPPER =  0xa365f75b072CF8BA95e6A27A9E1f94038dCB9A00; // Will be filled after deployment
+    address constant WHALE_WRAPPER = 0x1a5Ca1a4E69D0682cdF300a4bdF8F2d22928DA00; // Will be filled after deployment
     
     function run() external {
         // Create PYUSD-ETH pool with our wrapper hook
