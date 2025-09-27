@@ -3,10 +3,10 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { Users, TrendingUp, Shield, DollarSign } from 'lucide-react';
-import FamilyPoolCard from './FamilyPoolCard';
-import LiquidityCurve from './LiquidityCurve';
-import RebalancingVisual from './RebalancingVisual';
-import StatsDisplay from './StatsDisplay';
+import FamilyPoolCard from './FamilyPoolCard.tsx';
+import LiquidityCurve from './LiquidityCurve.tsx';
+import RebalancingVisual from './RebalancingVisual.tsx';
+import StatsDisplay from './StatsDisplay.tsx';
 import './HomePage.css';
 
 const HomePage: React.FC = () => {

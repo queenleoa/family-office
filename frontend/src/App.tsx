@@ -5,7 +5,7 @@ import { getDefaultConfig, RainbowKitProvider } from '@rainbow-me/rainbowkit';
 import { WagmiProvider } from 'wagmi';
 import { mainnet } from 'wagmi/chains';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import HomePage from './components/HomePage';
+import HomePage from './components/HomePage.tsx';
 import './App.css';
 
 const config = getDefaultConfig({
