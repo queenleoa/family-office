@@ -14,6 +14,7 @@ import {SafeCast} from "@uniswap/v4-core/src/libraries/SafeCast.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract WhalePoolWrapper is BaseHook {
     using PoolIdLibrary for PoolKey;
@@ -66,6 +67,15 @@ contract WhalePoolWrapper is BaseHook {
     function depositToFamily(PoolKey calldata key, uint256 amount) external returns (uint256 shares) {
         PoolId poolId = key.toId();
 
+        // Assume currency0 is PYUSD (you create pool with PYUSD<WETH ordering)
+        address pyusd = Currency.unwrap(key.currency0);
+        require(pyusd != address(0), "bad currency0");
+
+        // Pull funds
+        if (amount > 0) {
+            IERC20(pyusd).transferFrom(msg.sender, address(this), amount);
+        }
+
         // Track the deposit
         if (familyDeposits[poolId][msg.sender] == 0) {
             familyMembers[poolId].push(msg.sender);
@@ -81,6 +91,14 @@ contract WhalePoolWrapper is BaseHook {
         return amount; // 1:1 shares for simplicity
     }
 
+    // === Simple treasury read for UI/scripts ===
+    function treasuryBalances(PoolKey calldata key) external view returns (uint256 pyusdBal, uint256 wethBal) {
+        address token0 = Currency.unwrap(key.currency0);
+        address token1 = Currency.unwrap(key.currency1);
+        pyusdBal = IERC20(token0).balanceOf(address(this));
+        wethBal  = IERC20(token1).balanceOf(address(this));
+    }
+    
     // Initialize 20 positions across the price range
     function _afterInitialize(address, /*sender*/ PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
         internal

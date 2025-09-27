@@ -21,7 +21,7 @@ contract CreateFamilyPoolScript is BaseScript, LiquidityHelpers {
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     
     // Replace with your deployed hook address
-    address constant WHALE_WRAPPER =  0x932E43d6367599aE19E1099e50e8dE2Ee7149a00; // Will be filled after deployment
+    address constant WHALE_WRAPPER =  0xa365f75b072CF8BA95e6A27A9E1f94038dCB9A00; // Will be filled after deployment
     
     function run() external {
         // Create PYUSD-ETH pool with our wrapper hook
