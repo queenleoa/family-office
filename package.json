@@ -22,6 +22,19 @@
   },
   "homepage": "https://github.com/queenleoa/family-office#readme",
   "dependencies": {
-    "@pythnetwork/pyth-sdk-solidity": "^4.2.0"
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/poppins": "^5.2.7",
+    "@pythnetwork/pyth-sdk-solidity": "^4.2.0",
+    "@rainbow-me/rainbowkit": "^2.2.8",
+    "@tanstack/react-query": "^5.90.2",
+    "ethers": "^5.8.0",
+    "framer-motion": "^12.23.22",
+    "lucide-react": "^0.544.0",
+    "recharts": "^3.2.1",
+    "viem": "^2.37.8",
+    "wagmi": "^2.17.5"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.14"
   }
 }

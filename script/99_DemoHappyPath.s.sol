@@ -18,7 +18,7 @@ import {IPositionManager} from "@uniswap/v4-periphery/src/interfaces/IPositionMa
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
-
+import {Actions} from "@uniswap/v4-periphery/src/libraries/Actions.sol";
 
 interface IWETH {
     function deposit() external payable;
@@ -33,12 +33,12 @@ contract DemoHappyPathScript is BaseScript, StdCheats {
     address constant BROADCASTER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
     bytes32 constant FAMILY_OP_TAG = keccak256("FAMILY_OP_V1");
+
     function _familyHookData() internal pure returns (bytes memory) {
         return abi.encodePacked(FAMILY_OP_TAG);
     }
 
     function run() external {
-        
         // Setup wrapper (use deployed address)
         wrapper = WhalePoolWrapper(0x1a5Ca1a4E69D0682cdF300a4bdF8F2d22928DA00); // Replace with deployed address
 
@@ -72,7 +72,7 @@ contract DemoHappyPathScript is BaseScript, StdCheats {
         console.log("Total pooled: 3000 PYUSD");
 
         console.log("\n=== Authorized LP add (family tag) ===");
-        addTinyLiquiditySim(poolKey);   // passes hook’s auth check
+        addTinyLiquiditySim(poolKey); // passes hook’s auth check
 
         // Step 3: Live deposit during demo
         console.log("\n=== LIVE DEMO - You deposit ===");
@@ -114,48 +114,50 @@ contract DemoHappyPathScript is BaseScript, StdCheats {
         vm.stopPrank();
     }
 
- function addTinyLiquiditySim(PoolKey memory key) internal {
-    address actor = BROADCASTER;
+    function addTinyLiquiditySim(PoolKey memory key) internal {
+        address actor = BROADCASTER;
 
-    // ---- Get current tick to place range fully BELOW mid (single-sided WETH) ----
-    (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, PoolIdLibrary.toId(key));
-    int24 currentTick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
-    int24 ts = key.tickSpacing;
+        // Read current tick without `using` (explicit library style)
+        (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, PoolIdLibrary.toId(key));
+        int24 currentTick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
+        int24 ts = key.tickSpacing;
 
-    // range entirely below current → provides only token1 (WETH, since currency1 = WETH here)
-    int24 tickUpper = currentTick - 5 * ts;   // just below spot
-    int24 tickLower = tickUpper - 10 * ts;    // a bit wider below
+        // Place range fully BELOW current tick → single-sided token1 (WETH here)
+        int24 tickUpper = currentTick - 5 * ts;
+        int24 tickLower = tickUpper - 10 * ts;
 
-    // ---- Fund actor with ETH (works on fork), wrap to WETH ----
-    vm.deal(actor, 1 ether); // native ETH
-    vm.startPrank(actor);
-    IWETH(WETH).deposit{value: 0.5 ether}();  // wrap 0.5 ETH → WETH
-    IWETH(WETH).approve(address(positionManager), type(uint256).max);
+        // Fund actor with ETH and wrap to WETH (avoid ERC20 deal on fork)
+        vm.deal(actor, 1 ether);
+        vm.startPrank(actor);
+        IWETH(WETH).deposit{value: 0.5 ether}();
+        IWETH(WETH).approve(address(positionManager), type(uint256).max);
+        // No PYUSD needed; amount0Max = 0
 
-    // Approve PYUSD only if you *really* need it (we don't here, amount0Max=0)
-    // IERC20(PYUSD).approve(address(positionManager), type(uint256).max);
+        // Tiny liq and caps
+        uint256 liquidity = 1e12;
+        uint128 amount0Max = 0; // PYUSD not used
+        uint128 amount1Max = type(uint128).max; // allow WETH
+        address recipient = address(wrapper); // wrapper holds the LP
+        bytes memory hData = _familyHookData(); // family tag
+        uint256 deadline = block.timestamp + 60;
 
-    // ---- Tiny liquidity with only WETH leg ----
-    uint256 liquidity  = 1e12;                // tiny
-    uint256 amount0Max = 0;                   // PYUSD max = 0 (no PYUSD needed)
-    uint256 amount1Max = type(uint128).max;   // allow WETH spend
-    uint256 deadline   = block.timestamp + 60;
+        // Actions: MINT + SETTLE_PAIR + SWEEP + SWEEP
+        bytes memory actionsBytes = abi.encodePacked(
+            uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR), uint8(Actions.SWEEP), uint8(Actions.SWEEP)
+        );
 
-    // Recipient = wrapper → “single LP” narrative
-    (uint256 tokenId, ) = EasyPosm.mint(
-        IPositionManager(address(positionManager)),
-        key,
-        tickLower,
-        tickUpper,
-        liquidity,
-        amount0Max,
-        amount1Max,
-        address(wrapper),
-        deadline,
-        _familyHookData() // << family tag seen by your hook in beforeAddLiquidity
-    );
-    vm.stopPrank();
+        // Parameters for each action (avoid the name `params`/`ops`)
+        bytes;
+        pmParams[0] = abi.encode(key, tickLower, tickUpper, liquidity, amount0Max, amount1Max, recipient, hData);
+        pmParams[1] = abi.encode(key.currency0, key.currency1); // settle both tokens
+        pmParams[2] = abi.encode(key.currency0, actor); // sweep leftover token0 → actor
+        pmParams[3] = abi.encode(key.currency1, actor); // sweep leftover token1 → actor
 
-    console2.log("Authorized MINT (single-sided WETH) with family tag, tokenId:", tokenId);
-}
+        // Build unlockData and call
+        bytes memory unlockData = abi.encode(actionsBytes, pmParams);
+        IPositionManager(address(positionManager)).modifyLiquidities(unlockData, deadline);
+
+        vm.stopPrank();
+        console2.log("Authorized MINT (single-sided WETH) with family tag: OK");
+    }
 }
