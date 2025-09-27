@@ -8,71 +8,57 @@ import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
-import {IPythOracleManager} from "./IPythOracleManager.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+// Pyth Oracle interface
+interface IPyth {
+    struct Price {
+        int64 price;
+        uint64 conf;
+        int32 expo;
+        uint256 publishTime;
+    }
+    
+    function updatePriceFeeds(bytes[] calldata updateData) external payable;
+    function getPriceUnsafe(bytes32 id) external view returns (Price memory);
+    function getUpdateFee(bytes[] calldata updateData) external view returns (uint);
+}
 
 contract WhalePoolWrapper is BaseHook {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
-    using StateLibrary for IPoolManager;
 
-    // Events
-    event FamilyDeposit(address indexed member, uint256 amount);
-    event FamilyWithdraw(address indexed member, uint256 amount);
-    event PositionsRebalanced(uint256 totalValue, uint256 numPositions);
-    event FeesDistributed(uint256 totalFees, uint256 numFamilies);
-
-    // Family member tracking
-    struct FamilyMember {
-        uint256 depositedPYUSD;
+    // Pyth oracle and price feeds
+    IPyth public constant PYTH = IPyth(0xDd24F84d36BF92C65F92307595335bdFab5Bbd21); // Sepolia Pyth
+    bytes32 public constant ETH_USD_PRICE_FEED = 0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace;
+    bytes32 public constant PYUSD_USD_PRICE_FEED = 0x5b245b5906625fb27d8d848d27bfcaf72b8a5f5ea7e99e284665c6c4c4a04c9f; // Mock for demo
+    
+    // Family deposits tracking
+    struct FamilyPosition {
+        uint256 pyusdDeposited;
         uint256 sharePercentage; // in basis points (10000 = 100%)
-        uint256 pendingRewards;
-        bool isActive;
+        uint256 lastRebalancePrice;
     }
-
-    // Position tracking for multi-range liquidity
-    struct LiquidityPosition {
-        int24 tickLower;
-        int24 tickUpper;
-        uint128 liquidity;
-        uint256 weight; // Position weight for IL averaging
-    }
-
+    
+    mapping(address => FamilyPosition) public familyPositions;
+    address[] public families;
+    uint256 public totalPyusdDeposited;
+    
+    // Pool references
+    PoolKey public targetPool; // The whale pool we're joining
+    uint256 public wrapperPositionId; // Our NFT position in the whale pool
+    
     // Constants
-    uint256 public constant NUM_POSITIONS = 10; // Simplified from 20 for POC
-    uint256 public constant REBALANCE_THRESHOLD = 1500; // 15% price movement
-    uint256 public constant BASIS_POINTS = 10000;
-    int24 public constant TICK_SPACING = 60; // Standard for 0.3% fee tier
+    uint256 public constant REBALANCE_THRESHOLD = 500; // 5% price movement triggers rebalance
+    address public constant PYUSD = 0xCaC524BcA292aaade2DF8A05cC58F0a65B1B3bB9; // Sepolia PYUSD
     
-    // State variables
-    mapping(address => FamilyMember) public familyMembers;
-    address[] public memberList;
-    uint256 public totalFamilyDeposits;
-    uint256 public totalLiquidityValue;
+    event FamilyDeposited(address indexed family, uint256 amount);
+    event PositionRebalanced(uint256 oldPrice, uint256 newPrice);
     
-    // Position management
-    mapping(PoolId => LiquidityPosition[]) public positions;
-    uint256 public lastRebalancePrice;
-    uint256 public lastRebalanceTime;
+    constructor(IPoolManager _poolManager) BaseHook(_poolManager) {}
     
-    // External contracts
-    address public immutable PYUSD;
-    address public immutable WETH;
-    IPythOracleManager public pythOracle;
-
-    constructor(
-        IPoolManager _poolManager,
-        address _pyusd,
-        address _weth,
-        address _pythOracle
-    ) BaseHook(_poolManager) {
-        PYUSD = _pyusd;
-        WETH = _weth;
-        pythOracle = IPythOracleManager(_pythOracle);
-    }
-
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: false,
@@ -80,273 +66,106 @@ contract WhalePoolWrapper is BaseHook {
             beforeAddLiquidity: true,
             afterAddLiquidity: true,
             beforeRemoveLiquidity: true,
-            afterRemoveLiquidity: true,
+            afterRemoveLiquidity: false,
             beforeSwap: false,
-            afterSwap: true,
+            afterSwap: false,
             beforeDonate: false,
             afterDonate: false,
             beforeSwapReturnDelta: false,
-            afterSwapReturnDelta: true,
+            afterSwapReturnDelta: false,
             afterAddLiquidityReturnDelta: false,
             afterRemoveLiquidityReturnDelta: false
         });
     }
-
-    /// @notice Family member deposits PYUSD to join the collective pool
-    function depositPYUSD(uint256 amount) external {
-        require(amount > 0, "Amount must be positive");
-        require(IERC20(PYUSD).transferFrom(msg.sender, address(this), amount), "Transfer failed");
-
-        FamilyMember storage member = familyMembers[msg.sender];
+    
+    // Family deposits PYUSD, we convert to ETH-PYUSD and add to whale pool
+    function deposit(uint256 pyusdAmount, bytes[] calldata pythUpdateData) external payable {
+        // Update Pyth price feeds
+        uint updateFee = PYTH.getUpdateFee(pythUpdateData);
+        PYTH.updatePriceFeeds{value: updateFee}(pythUpdateData);
         
-        if (!member.isActive) {
-            memberList.push(msg.sender);
-            member.isActive = true;
+        // Get current ETH price
+        IPyth.Price memory ethPrice = PYTH.getPriceUnsafe(ETH_USD_PRICE_FEED);
+        uint256 ethPriceUsd = uint256(uint64(ethPrice.price)) * (10 ** uint256(uint32(-ethPrice.expo)));
+        
+        // Transfer PYUSD from user
+        IERC20(PYUSD).transferFrom(msg.sender, address(this), pyusdAmount);
+        
+        // Calculate how much ETH we need to buy with half the PYUSD
+        uint256 pyusdForEth = pyusdAmount / 2;
+        uint256 ethNeeded = (pyusdForEth * 1e18) / ethPriceUsd; // Convert to ETH amount
+        
+        // Track family position
+        if (familyPositions[msg.sender].pyusdDeposited == 0) {
+            families.push(msg.sender);
         }
         
-        member.depositedPYUSD += amount;
-        totalFamilyDeposits += amount;
+        familyPositions[msg.sender].pyusdDeposited += pyusdAmount;
+        totalPyusdDeposited += pyusdAmount;
         
-        // Update share percentages for all members
-        _updateSharePercentages();
+        // Update share percentages
+        _updateShares();
         
-        emit FamilyDeposit(msg.sender, amount);
+        emit FamilyDeposited(msg.sender, pyusdAmount);
         
-        // Convert and add to liquidity if threshold met
-        if (totalFamilyDeposits > 0) {
-            _addCollectiveLiquidity();
+        // TODO: In next step, we'll swap PYUSD for ETH and add liquidity
+    }
+    
+    function _updateShares() internal {
+        for (uint i = 0; i < families.length; i++) {
+            familyPositions[families[i]].sharePercentage = 
+                (familyPositions[families[i]].pyusdDeposited * 10000) / totalPyusdDeposited;
         }
     }
-
-    /// @notice Withdraw proportional share
-    function withdraw() external {
-        FamilyMember storage member = familyMembers[msg.sender];
-        require(member.isActive, "Not a family member");
-        require(member.depositedPYUSD > 0, "No deposits");
-
-        uint256 shareAmount = _calculateMemberShare(msg.sender);
+    
+    // Check if rebalancing is needed
+    function shouldRebalance(bytes[] calldata pythUpdateData) external returns (bool) {
+        uint updateFee = PYTH.getUpdateFee(pythUpdateData);
+        PYTH.updatePriceFeeds{value: updateFee}(pythUpdateData);
         
-        // Remove liquidity proportionally
-        _removeCollectiveLiquidity(member.sharePercentage);
+        IPyth.Price memory ethPrice = PYTH.getPriceUnsafe(ETH_USD_PRICE_FEED);
+        uint256 currentPrice = uint256(uint64(ethPrice.price));
         
-        // Transfer PYUSD back
-        require(IERC20(PYUSD).transfer(msg.sender, shareAmount), "Transfer failed");
-        
-        // Update state
-        totalFamilyDeposits -= member.depositedPYUSD;
-        member.depositedPYUSD = 0;
-        member.isActive = false;
-        
-        // Remove from list if fully withdrawn
-        _removeMemberFromList(msg.sender);
-        _updateSharePercentages();
-        
-        emit FamilyWithdraw(msg.sender, shareAmount);
-    }
-
-    /// @notice Convert deposited PYUSD to ETH/PYUSD LP positions
-    function _addCollectiveLiquidity() internal {
-        uint256 pyusdBalance = IERC20(PYUSD).balanceOf(address(this));
-        if (pyusdBalance == 0) return;
-
-        // Swap half PYUSD to ETH for balanced liquidity
-        uint256 halfPyusd = pyusdBalance / 2;
-        uint256 ethAmount = _swapPYUSDForETH(halfPyusd);
-        
-        // Create multiple positions across different ranges
-        _createMultiplePositions(ethAmount, halfPyusd);
-    }
-
-    /// @notice Swap PYUSD for ETH using pool
-    function _swapPYUSDForETH(uint256 pyusdAmount) internal view returns (uint256) {
-        // Implementation would use PoolManager swap
-        // For POC, using oracle price simulation
-        uint256 ethPrice = pythOracle.getETHPrice();
-        return (pyusdAmount * 1e18) / ethPrice;
-    }
-
-    /// @notice Create multiple positions across different price ranges
-    function _createMultiplePositions(uint256 ethAmount, uint256 pyusdAmount) internal {
-        // Get current price tick
-        int24 currentTick = _getCurrentTick();
-        
-        // Divide liquidity across positions
-        uint256 ethPerPosition = ethAmount / NUM_POSITIONS;
-        uint256 pyusdPerPosition = pyusdAmount / NUM_POSITIONS;
-        
-        // Create positions with different ranges
-        for (uint256 i = 0; i < NUM_POSITIONS; i++) {
-            int24 offset = int24(int256(i) * 200 * TICK_SPACING); // Different ranges
-            int24 tickLower = currentTick - offset - 500 * TICK_SPACING;
-            int24 tickUpper = currentTick + offset + 500 * TICK_SPACING;
-            
-            // Round to nearest tick spacing
-            tickLower = (tickLower / TICK_SPACING) * TICK_SPACING;
-            tickUpper = (tickUpper / TICK_SPACING) * TICK_SPACING;
-            
-            _addLiquidityToPosition(
-                tickLower,
-                tickUpper,
-                ethPerPosition,
-                pyusdPerPosition,
-                _calculatePositionWeight(i)
-            );
-        }
-    }
-
-    /// @notice Calculate position weight for IL averaging
-    function _calculatePositionWeight(uint256 index) internal pure returns (uint256) {
-        // Tighter ranges get higher weight
-        if (index < 3) return 200; // 2x weight for tight ranges
-        if (index < 7) return 100; // 1x weight for medium ranges
-        return 50; // 0.5x weight for wide ranges
-    }
-
-    /// @notice Check if rebalancing is needed based on price movement
-    function checkRebalanceNeeded() external view returns (bool) {
-        uint256 currentPrice = pythOracle.getETHPrice();
-        uint256 priceChange = currentPrice > lastRebalancePrice 
-            ? ((currentPrice - lastRebalancePrice) * BASIS_POINTS) / lastRebalancePrice
-            : ((lastRebalancePrice - currentPrice) * BASIS_POINTS) / lastRebalancePrice;
-            
-        return priceChange >= REBALANCE_THRESHOLD && 
-               block.timestamp > lastRebalanceTime + 1 days;
-    }
-
-    /// @notice Rebalance all positions based on new price
-    function rebalancePositions() external {
-        require(this.checkRebalanceNeeded(), "Rebalance not needed");
-        
-        // Collect all fees first
-        uint256 totalFees = _collectAllFees();
-        
-        // Remove all existing liquidity
-        _removeAllLiquidity();
-        
-        // Get current balances
-        uint256 pyusdBalance = IERC20(PYUSD).balanceOf(address(this));
-        uint256 ethBalance = address(this).balance;
-        
-        // Recreate positions at new price levels
-        _createMultiplePositions(ethBalance, pyusdBalance);
-        
-        // Update rebalance tracking
-        lastRebalancePrice = pythOracle.getETHPrice();
-        lastRebalanceTime = block.timestamp;
-        
-        // Distribute fees to family members
-        _distributeFees(totalFees);
-        
-        emit PositionsRebalanced(pyusdBalance + (ethBalance * lastRebalancePrice / 1e18), NUM_POSITIONS);
-    }
-
-    /// @notice Distribute collected fees equally among families
-    function _distributeFees(uint256 totalFees) internal {
-        if (memberList.length == 0 || totalFees == 0) return;
-        
-        uint256 feePerMember = totalFees / memberList.length;
-        
-        for (uint256 i = 0; i < memberList.length; i++) {
-            familyMembers[memberList[i]].pendingRewards += feePerMember;
-        }
-        
-        emit FeesDistributed(totalFees, memberList.length);
-    }
-
-    /// @notice Claim accumulated rewards
-    function claimRewards() external {
-        FamilyMember storage member = familyMembers[msg.sender];
-        require(member.pendingRewards > 0, "No rewards");
-        
-        uint256 rewards = member.pendingRewards;
-        member.pendingRewards = 0;
-        
-        require(IERC20(PYUSD).transfer(msg.sender, rewards), "Transfer failed");
-    }
-
-    // Helper functions
-    function _updateSharePercentages() internal {
-        if (totalFamilyDeposits == 0) return;
-        
-        for (uint256 i = 0; i < memberList.length; i++) {
-            FamilyMember storage member = familyMembers[memberList[i]];
-            member.sharePercentage = (member.depositedPYUSD * BASIS_POINTS) / totalFamilyDeposits;
-        }
-    }
-
-    function _calculateMemberShare(address memberAddress) internal view returns (uint256) {
-        FamilyMember memory member = familyMembers[memberAddress];
-        return (totalLiquidityValue * member.sharePercentage) / BASIS_POINTS;
-    }
-
-    function _removeMemberFromList(address memberAddress) internal {
-        for (uint256 i = 0; i < memberList.length; i++) {
-            if (memberList[i] == memberAddress) {
-                memberList[i] = memberList[memberList.length - 1];
-                memberList.pop();
-                break;
+        // Check against last rebalance price for any family (simplified)
+        if (families.length > 0) {
+            uint256 lastPrice = familyPositions[families[0]].lastRebalancePrice;
+            if (lastPrice > 0) {
+                uint256 priceDiff = currentPrice > lastPrice ? 
+                    ((currentPrice - lastPrice) * 10000) / lastPrice :
+                    ((lastPrice - currentPrice) * 10000) / lastPrice;
+                    
+                return priceDiff > REBALANCE_THRESHOLD;
             }
         }
+        return false;
     }
-
-    // Placeholder functions for POC
-    function _getCurrentTick() internal pure returns (int24) {
-        // Would get from pool state
-        return 0;
+    
+    // Hook callbacks (simplified for now)
+    function _beforeAddLiquidity(
+        address,
+        PoolKey calldata,
+        //IPoolManager.ModifyLiquidityParams calldata,
+        bytes calldata
+    ) internal override returns (bytes4) {
+        return BaseHook.beforeAddLiquidity.selector;
     }
-
-    function _addLiquidityToPosition(
-        int24 tickLower,
-        int24 tickUpper,
-        uint256 ethAmount,
-        uint256 pyusdAmount,
-        uint256 weight
-    ) internal {
-        // Implementation would use PoolManager
-        // Store position data for tracking
+    
+    function _afterAddLiquidity(
+        address,
+        PoolKey calldata,
+        IPoolManager.ModifyLiquidityParams calldata,
+        BalanceDelta,
+        bytes calldata
+    ) internal override returns (bytes4, BalanceDelta) {
+        return (BaseHook.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
-
-    function _removeCollectiveLiquidity(uint256 sharePercentage) internal {
-        // Remove liquidity proportionally
-    }
-
-    function _removeAllLiquidity() internal {
-        // Remove all positions for rebalancing
-    }
-
-    function _collectAllFees() internal pure returns (uint256) {
-        // Collect fees from all positions
-        return 0;
-    }
-
-    // View functions for frontend
-    function getFamilyStats() external view returns (
-        uint256 numMembers,
-        uint256 totalDeposited,
-        uint256 totalValue,
-        uint256 averageAPY
-    ) {
-        numMembers = memberList.length;
-        totalDeposited = totalFamilyDeposits;
-        totalValue = totalLiquidityValue;
-        averageAPY = _calculateAPY();
-    }
-
-    function getMemberInfo(address member) external view returns (
-        uint256 deposited,
-        uint256 currentValue,
-        uint256 sharePercent,
-        uint256 pendingRewards
-    ) {
-        FamilyMember memory info = familyMembers[member];
-        deposited = info.depositedPYUSD;
-        currentValue = _calculateMemberShare(member);
-        sharePercent = info.sharePercentage;
-        pendingRewards = info.pendingRewards;
-    }
-
-    function _calculateAPY() internal pure returns (uint256) {
-        // Calculate based on fees collected vs time
-        return 1200; // 12% APY placeholder
+    
+    function _beforeRemoveLiquidity(
+        address,
+        PoolKey calldata,
+        IPoolManager.ModifyLiquidityParams calldata,
+        bytes calldata
+    ) internal override returns (bytes4) {
+        return BaseHook.beforeRemoveLiquidity.selector;
     }
 }
