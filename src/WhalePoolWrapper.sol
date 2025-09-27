@@ -22,6 +22,11 @@ contract WhalePoolWrapper is BaseHook {
     using SafeCast for uint256;
     using StateLibrary for IPoolManager;
 
+    error UnauthorizedLpOp();
+
+    // make a constant family operation tag (stable identifier)
+    bytes32 internal constant FAMILY_OP_TAG = keccak256("FAMILY_OP_V1");
+
     // Family member deposits
     mapping(PoolId => mapping(address => uint256)) public familyDeposits;
     mapping(PoolId => uint256) public totalFamilyDeposits;
@@ -41,6 +46,8 @@ contract WhalePoolWrapper is BaseHook {
     event FamilyDeposit(address indexed member, uint256 amount, PoolId indexed poolId);
     event Rebalanced(PoolId indexed poolId, uint256 newPrice);
     event FeesDistributed(PoolId indexed poolId, uint256 totalFees);
+
+    error ExitCooldown(uint48 remaining);
 
     constructor(IPoolManager _poolManager) BaseHook(_poolManager) {}
 
@@ -96,9 +103,9 @@ contract WhalePoolWrapper is BaseHook {
         address token0 = Currency.unwrap(key.currency0);
         address token1 = Currency.unwrap(key.currency1);
         pyusdBal = IERC20(token0).balanceOf(address(this));
-        wethBal  = IERC20(token1).balanceOf(address(this));
+        wethBal = IERC20(token1).balanceOf(address(this));
     }
-    
+
     // Initialize 20 positions across the price range
     function _afterInitialize(address, /*sender*/ PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
         internal
@@ -140,10 +147,8 @@ contract WhalePoolWrapper is BaseHook {
         PoolId poolId = key.toId();
 
         // Check if this is a family deposit (identified by hookData)
-        if (hookData.length > 0 && keccak256(hookData) == keccak256("FAMILY_DEPOSIT")) {
-            // Instead of adding liquidity to a single position,
-            // we'll distribute across our 20 positions
-            // This is handled in the demo script for simplicity
+        if (hookData.length != 32 || bytes32(hookData) != FAMILY_OP_TAG) {
+            revert UnauthorizedLpOp();
         }
 
         return BaseHook.beforeAddLiquidity.selector;
@@ -158,10 +163,9 @@ contract WhalePoolWrapper is BaseHook {
     ) internal override returns (bytes4) {
         PoolId poolId = key.toId();
 
-        // Calculate proportional withdrawal
-        uint256 userShare = familyDeposits[poolId][sender];
-        require(userShare > 0, "No deposits found");
-
+        if (hookData.length != 32 || bytes32(hookData) != FAMILY_OP_TAG) {
+            revert UnauthorizedLpOp();
+        }
         // For demo, we'll handle the actual removal in scripts
         return BaseHook.beforeRemoveLiquidity.selector;
     }

@@ -11,6 +11,9 @@ import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import "forge-std/console.sol";
 import {Test, console2} from "forge-std/Test.sol";
 import {StdCheats} from "forge-std/StdCheats.sol";
+import {ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
+import {EasyPosm} from "../test/utils/libraries/EasyPosm.sol";
 
 contract DemoHappyPathScript is BaseScript, StdCheats {
     address constant PYUSD = 0x6c3ea9036406852006290770BEdFcAbA0e23A0e8;
@@ -18,6 +21,11 @@ contract DemoHappyPathScript is BaseScript, StdCheats {
     WhalePoolWrapper wrapper;
     // anvil default for --private-key 0xac0974...ff80
     address constant BROADCASTER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
+
+    bytes32 constant FAMILY_OP_TAG = keccak256("FAMILY_OP_V1");
+    function _familyHookData() internal pure returns (bytes memory) {
+        return abi.encodePacked(FAMILY_OP_TAG);
+    }
 
     function run() external {
         // Setup wrapper (use deployed address)
@@ -51,6 +59,9 @@ contract DemoHappyPathScript is BaseScript, StdCheats {
 
         console.log("Family members after setup: 3");
         console.log("Total pooled: 3000 PYUSD");
+
+        console.log("\n=== Authorized LP add (family tag) ===");
+        addTinyLiquiditySim(poolKey);   // passes hook’s auth check
 
         // Step 3: Live deposit during demo
         console.log("\n=== LIVE DEMO - You deposit ===");
@@ -91,4 +102,46 @@ contract DemoHappyPathScript is BaseScript, StdCheats {
         wrapper.depositToFamily(key, amount);
         vm.stopPrank();
     }
+
+ function addTinyLiquiditySim(PoolKey memory key) internal {
+    address actor = BROADCASTER;
+
+    // seed balances in SIMULATION (deal only affects local state)
+    deal(PYUSD, actor, 2_000e6, true);
+    deal(WETH,  actor, 1 ether,  true);
+
+    vm.startPrank(actor);
+    IERC20(PYUSD).approve(address(positionManager), type(uint256).max);
+    IERC20(WETH).approve(address(positionManager),  type(uint256).max);
+
+    // pick a small centered range
+    int24 ts = key.tickSpacing;
+    int24 tickLower = -10 * ts;
+    int24 tickUpper =  10 * ts;
+
+    // tiny liquidity; generous max caps (simulation)
+    uint256 liquidity  = 1e12;
+    uint256 amount0Max = type(uint128).max;
+    uint256 amount1Max = type(uint128).max;
+
+    uint256 deadline = block.timestamp + 60;
+
+    // Mint via EasyPosm (forwards hookData to your hook)
+    (uint256 tokenId, ) = EasyPosm.mint(
+        IPositionManager(address(positionManager)),
+        key,
+        tickLower,
+        tickUpper,
+        liquidity,
+        amount0Max,
+        amount1Max,
+        address(wrapper),          // recipient = wrapper (acts as single LP)
+        deadline,
+        _familyHookData()          // <<< your family tag goes here
+    );
+
+    vm.stopPrank();
+
+    console2.log("Authorized MINT with family tag, tokenId:", tokenId);
+}
 }
