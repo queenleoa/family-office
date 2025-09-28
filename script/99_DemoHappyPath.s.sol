@@ -73,7 +73,6 @@ contract DemoHappyPathScript is BaseScript, StdCheats {
         console.log("Total pooled: 3000 PYUSD");
 
         console.log("\n=== Authorized LP add (family tag) ===");
-        addTinyLiquiditySim(poolKey);   // passes hook’s auth check
 
         // Step 3: Live deposit during demo
         console.log("\n=== LIVE DEMO - You deposit ===");
@@ -115,55 +114,5 @@ contract DemoHappyPathScript is BaseScript, StdCheats {
         vm.stopPrank();
     }
 
- function addTinyLiquiditySim(PoolKey memory key) internal {
-    address actor = BROADCASTER;
-
-    // Read current tick (explicit library calls; no `using` needed)
-    (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, PoolIdLibrary.toId(key));
-    int24 currentTick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
-    int24 ts = key.tickSpacing;
-
-    // Put range fully BELOW current tick → single-sided token1 (WETH here)
-    int24 tickUpper = currentTick - 5 * ts;
-    int24 tickLower = tickUpper - 10 * ts;
-
-    // Fund actor in SIMULATION, wrap ETH → WETH (avoid StdCheats.deal for ERC20)
-    vm.deal(actor, 1 ether);
-    vm.startPrank(actor);
-    IWETH(WETH).deposit{value: 0.5 ether}();
-    IWETH(WETH).approve(address(positionManager), type(uint256).max);
-    // No PYUSD needed; we’ll set amount0Max = 0
-
-    // Tiny liquidity, token caps, recipient = wrapper
-    uint256 liquidity   = 1e12;
-    uint128 amount0Max  = 0;                         // PYUSD not used
-    uint128 amount1Max  = type(uint128).max;         // allow WETH
-    address recipient   = address(wrapper);
-    bytes   memory hData = _familyHookData();        // your family tag
-    uint256 deadline    = block.timestamp + 60;
-
-    // Actions: MINT + SETTLE_PAIR + SWEEP + SWEEP
-    bytes memory actionsBytes = abi.encodePacked(
-        uint8(Actions.MINT_POSITION),
-        uint8(Actions.SETTLE_PAIR),
-        uint8(Actions.SWEEP),
-        uint8(Actions.SWEEP)
-    );
-
-    // Parameters for each action — use a name that isn’t `params`
-    bytes;
-    ops[0] = abi.encode(key, tickLower, tickUpper, liquidity, amount0Max, amount1Max, recipient, hData);
-    ops[1] = abi.encode(key.currency0, key.currency1); // settle both tokens
-    ops[2] = abi.encode(key.currency0, actor);         // sweep leftover token0 to actor
-    ops[3] = abi.encode(key.currency1, actor);         // sweep leftover token1 to actor
-
-    // Pack unlockData and call PositionManager
-    bytes memory unlockData = abi.encode(actionsBytes, ops);
-    IPositionManager(address(positionManager)).modifyLiquidities(unlockData, deadline);
-
-    vm.stopPrank();
-    console2.log("Authorized MINT (single-sided WETH) with family tag: OK");
-}
-mk
 
 }
