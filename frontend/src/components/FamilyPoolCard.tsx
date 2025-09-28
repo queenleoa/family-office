@@ -42,7 +42,7 @@ const FamilyPoolCard: React.FC<{ onDeposit: () => void; hasDeposited: boolean }>
             <Users size={16} />
             {hasDeposited ? '4 Members' : '3 Members'}
           </span>
-          <span className="apy">24.5% APY</span>
+          <span className="apy">10.5% APY</span>
         </div>
       </div>
 

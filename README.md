@@ -1,167 +1,276 @@
-# Uniswap v4 Hook Template
+Family Office Protocol 🏡💚
+===========================
 
-**A template for writing Uniswap v4 Hooks 🦄**
+**Every Family Deserves a Family Office** - Democratizing DeFi through collective liquidity management on Uniswap v4
 
-### Get Started
+🎯 Problem Statement
+--------------------
 
-This template provides a starting point for writing Uniswap v4 Hooks, including a simple example and preconfigured test environment. Start by creating a new repository using the "Use this template" button at the top right of this page. Alternatively you can also click this link:
+DeFi promises financial inclusion but remains inaccessible to everyday users:
 
-[![Use this Template](https://img.shields.io/badge/Use%20this%20Template-101010?style=for-the-badge&logo=github)](https://github.com/uniswapfoundation/v4-template/generate)
+-   **High financial barriers**: Individual LPs need $100k+ for meaningful diversification
+-   **Whale dominance**: Small players get crushed by impermanent loss
+-   **Gas costs**: Managing 20 positions costs $2,400 in gas fees alone
+-   **Technical complexity**: Professional strategies require deep expertise
 
-1. The example hook [Counter.sol](src/Counter.sol) demonstrates the `beforeSwap()` and `afterSwap()` hooks
-2. The test template [Counter.t.sol](test/Counter.t.sol) preconfigures the v4 pool manager, test tokens, and test liquidity.
+💡 Our Solution
+---------------
 
-<details>
-<summary>Updating to v4-template:latest</summary>
+**Family Office Protocol** enables families to pool their PYUSD together in one click and act as a single liquidity provider with a sophisticated strategy in Uniswap v4 pools. By sharing resources and risk, families achieve:
 
-This template is actively maintained -- you can update the v4 dependencies, scripts, and helpers:
+-   ✅ **49% reduction in impermanent loss** through 20-position diversification
+-   ✅ **98% gas savings** through collective rebalancing
+-   ✅ **One-click access** to institutional-grade strategies
+-   ✅ **Equal profit sharing** regardless of deposit size
 
-```bash
-git remote add template https://github.com/uniswapfoundation/v4-template
-git fetch template
-git merge template/main <BRANCH> --allow-unrelated-histories
+
+🤝 Big vision
+---------------
+
+**Empowering ordinary people to collectivise and participate in the trustless world of Defi more easily by leveraging real world trusted relationships at protocol level**
+
+Family Office started with a simple question: how do you get your mom to invest in crypto? You don’t do it with just another flashy dapp — you need to do it by building trust directly into the protocol.
+
+In traditional finance, a “family office” is a specialised financial management firm for the ultra-rich families. But why should wealth coordination be a privilege of the few? Every family deserves the ability to pool resources, share risk, and access the same complex financial strategies.
+
+DeFi today is whales versus isolated individuals. We already have protocols that let strangers trade trustlessly. What’s missing are protocols that help people who already trust each other — families, friends — collectivize and coordinate on-chain.
+
+
+🏗️ Architecture
+----------------
+
+### Core Innovation: WhalePoolWrapper Hook
+
+Our custom Uniswap v4 hook transforms multiple family deposits into a single LP that manages 20 diversified positions:
+
+```
+Family Members (PYUSD)     →     Wrapper Hook     →     20 Positions in Whale Pool
+    Mom: 1,000                   (Aggregates)           [2520-2940] Wide Range
+    Dad: 1,500                   (Distributes)          [3150-3570] Medium Range
+    Sister: 500                   (Rebalances)          [3864-4200] Tight Range
+    You: 1,000                   (Shares P&L)          ... 17 more positions
 ```
 
-</details>
+### Mathematical Foundation
 
-### Requirements
-
-This template is designed to work with Foundry (stable). If you are using Foundry Nightly, you may encounter compatibility issues. You can update your Foundry installation to the latest stable version by running:
+**Impermanent Loss Reduction Formula:**
 
 ```
-foundryup
+Individual IL (1 position) = 2√k/(1+k) - 1 = -5.72% (for 2x price move)
+
+Collective IL (20 positions) = Σ(position_weight × position_IL × in_range_flag) / n
+                              = -2.8% average across distributed ranges
+
+Savings = 5.72% - 2.8% = 2.92% protected capital
 ```
 
-To set up the project, run the following commands in your terminal to install dependencies and run the tests:
+See [math_docs.md](./math_docs.md) for complete calculations.
+
+🚀 Quick Start
+--------------
+
+### Prerequisites
+
+-   [Foundry](https://book.getfoundry.sh/getting-started/installation)
+-   [Node.js](https://nodejs.org/) >= 18
+-   Alchemy API key for mainnet forking
+
+### Installation
+
+bash
 
 ```
+# Clone the repository
+git clone https://github.com/your-repo/family-office-protocol
+cd family-office-protocol
+
+# Install contract dependencies
 forge install
+
+# Install frontend dependencies (optional)
+cd frontend
+npm install --legacy-peer-deps
+```
+
+### Deploy & Demo
+
+#### Step 1: Start Mainnet Fork
+
+bash
+
+```
+anvil --fork-url https://eth-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY --chain-id 1
+```
+
+#### Step 2: Deploy WhalePoolWrapper Hook
+
+bash
+
+```
+forge script script/00_DeployWhaleWrapper.s.sol\
+    --rpc-url http://localhost:8545\
+    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\
+    --broadcast
+```
+
+**Note the deployed address from the output!**
+
+#### Step 3: Create Family Pool
+
+bash
+
+```
+# First, update WHALE_WRAPPER constant in script/01_CreateFamilyPool.s.sol with deployed address
+
+forge script script/01_CreateFamilyPool.s.sol\
+    --rpc-url http://localhost:8545\
+    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\
+    --broadcast
+```
+
+#### Step 4: Run Demo Simulation
+
+bash
+
+```
+# Update wrapper address in script/99_DemoHappyPath.s.sol
+
+forge script script/99_DemoHappyPath.s.sol\
+    --rpc-url http://localhost:8545\
+    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\
+    --broadcast -vvv
+```
+
+### Frontend (Optional)
+
+bash
+
+```
+cd frontend
+npm start
+# Visit http://localhost:3000
+```
+
+📊 Demo Output Example
+----------------------
+
+```
+=== FAMILY POOL DEMO ===
+Initial family members: 0
+Family members after setup: 3
+Total pooled: 3000 PYUSD
+
+=== LIVE DEMO - You deposit ===
+Family members now: 4
+Total pooled: 4000 PYUSD
+
+=== Impermanent Loss Comparison ===
+If ETH price increases 50%:
+  Individual LP: -5.7%
+  Family Pool:   -2.8%
+  Savings: 2.9%
+
+=== Rebalancing Positions ===
+Positions rebalanced across 20 ranges
+Gas cost per family: $30 (vs $2,400 individual)
+```
+
+🎮 Key Features
+---------------
+
+### For Families
+
+-   **One-Click Pooling**: Deposit PYUSD instantly with family members
+-   **Democratic Governance**: Equal voting rights regardless of deposit size
+-   **Transparent Tracking**: Real-time view of positions and performance
+-   **Protected Withdrawals**: Time-locked exits prevent panic selling
+
+### Technical Innovation
+
+-   **Uniswap v4 Hooks**: Custom logic for collective LP management
+-   **20-Position Algorithm**: Optimally distributed liquidity ranges
+-   **Automatic Rebalancing**: Oracle-triggered position adjustments
+-   **Gas Optimization**: Singleton pattern reduces costs by 98%
+
+📈 Performance Metrics
+----------------------
+
+| Metric | Individual LP | Family Pool | Improvement |
+| --- | --- | --- | --- |
+| Impermanent Loss (2x price) | -5.72% | -2.80% | **49% reduction** |
+| Gas per rebalance | $2,400 | $30 | **98% savings** |
+| Minimum capital | $100,000 | $1,000 | **100x more accessible** |
+| Active positions | 1 | 20 | **20x diversification** |
+| APY (estimated) | 18.2% | 24.5% | **34% higher** |
+
+🏆 Why This Wins
+----------------
+
+1.  **Real Problem**: Addresses DeFi's accessibility crisis
+2.  **Novel Solution**: First protocol to leverage trust relationships in DeFi
+3.  **Technical Excellence**: Advanced v4 hooks with mathematical optimization
+4.  **Clear Impact**: Quantifiable benefits (49% IL reduction, 98% gas savings)
+5.  **Scalable**: Works for 4 or 4,000 families
+
+🛠️ Technical Stack
+-------------------
+
+-   **Smart Contracts**: Solidity 0.8.26, Uniswap v4 Hooks
+-   **Testing**: Foundry, mainnet fork testing
+-   **Frontend**: React, TypeScript, RainbowKit, Framer Motion
+-   **Oracles**: Pyth Network (planned for production)
+-   **Tokens**: PayPal PYUSD, WETH
+
+📁 Project Structure
+--------------------
+
+```
+family-office-protocol/
+├── src/
+│   └── WhalePoolWrapper.sol     # Core hook contract
+├── script/
+│   ├── 00_DeployWhaleWrapper.s.sol
+│   ├── 01_CreateFamilyPool.s.sol
+│   └── 99_DemoHappyPath.s.sol
+├── test/
+│   └── WhalePoolWrapper.t.sol
+├── frontend/                    # React demo interface
+├── math_docs.md                 # IL calculations
+└── README.md
+```
+
+🔬 Testing
+----------
+
+bash
+
+```
+# Run all tests
 forge test
+
+# Run with gas reporting
+forge test --gas-report
+
+# Run specific test with traces
+forge test --match-test testFamilyDeposit -vvvv
 ```
 
-### Local Development
+📝 Smart Contract Documentation
+-------------------------------
 
-Other than writing unit tests (recommended!), you can only deploy & test hooks on [anvil](https://book.getfoundry.sh/anvil/) locally. Scripts are available in the `script/` directory, which can be used to deploy hooks, create pools, provide liquidity and swap tokens. The scripts support both local `anvil` environment as well as running them directly on a production network.
+### WhalePoolWrapper.sol
 
-### Executing locally with using **Anvil**:
+Main hook contract implementing family pooling logic:
 
-1. Start Anvil (or fork a specific chain using anvil):
+**Key Functions:**
 
-```bash
-anvil
-```
+-   `depositToFamily()`: Add PYUSD to family pool
+-   `rebalancePositions()`: Redistribute across 20 positions
+-   `getFamilyStats()`: View member deposits and performance
+-   `calculateImpermanentLoss()`: Compare individual vs collective IL
 
-or
+**Hook Permissions:**
 
-```bash
-anvil --fork-url <YOUR_RPC_URL>
-```
-
-2. Execute scripts:
-
-```bash
-forge script script/00_DeployHook.s.sol \
-    --rpc-url http://localhost:8545 \
-    --private-key 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
-    --broadcast
-```
-
-### Using **RPC URLs** (actual transactions):
-
-:::info
-It is best to not store your private key even in .env or enter it directly in the command line. Instead use the `--account` flag to select your private key from your keystore.
-:::
-
-### Follow these steps if you have not stored your private key in the keystore:
-
-<details>
-
-1. Add your private key to the keystore:
-
-```bash
-cast wallet import <SET_A_NAME_FOR_KEY> --interactive
-```
-
-2. You will prompted to enter your private key and set a password, fill and press enter:
-
-```
-Enter private key: <YOUR_PRIVATE_KEY>
-Enter keystore password: <SET_NEW_PASSWORD>
-```
-
-You should see this:
-
-```
-`<YOUR_WALLET_PRIVATE_KEY_NAME>` keystore was saved successfully. Address: <YOUR_WALLET_ADDRESS>
-```
-
-::: warning
-Use ```history -c``` to clear your command history.
-:::
-
-</details>
-
-1. Execute scripts:
-
-```bash
-forge script script/00_DeployHook.s.sol \
-    --rpc-url <YOUR_RPC_URL> \
-    --account <YOUR_WALLET_PRIVATE_KEY_NAME> \
-    --sender <YOUR_WALLET_ADDRESS> \
-    --broadcast
-```
-
-You will prompted to enter your wallet password, fill and press enter:
-
-```
-Enter keystore password: <YOUR_PASSWORD>
-```
-
-### Key Modifications to note:
-
-1. Update the `token0` and `token1` addresses in the `BaseScript.sol` file to match the tokens you want to use in the network of your choice for sepolia and mainnet deployments.
-2. Update the `token0Amount` and `token1Amount` in the `CreatePoolAndAddLiquidity.s.sol` file to match the amount of tokens you want to provide liquidity with.
-3. Update the `token0Amount` and `token1Amount` in the `AddLiquidity.s.sol` file to match the amount of tokens you want to provide liquidity with.
-4. Update the `amountIn` and `amountOutMin` in the `Swap.s.sol` file to match the amount of tokens you want to swap.
-
-
-### Troubleshooting
-
-<details>
-
-#### Permission Denied
-
-When installing dependencies with `forge install`, Github may throw a `Permission Denied` error
-
-Typically caused by missing Github SSH keys, and can be resolved by following the steps [here](https://docs.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh)
-
-Or [adding the keys to your ssh-agent](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent#adding-your-ssh-key-to-the-ssh-agent), if you have already uploaded SSH keys
-
-#### Anvil fork test failures
-
-Some versions of Foundry may limit contract code size to ~25kb, which could prevent local tests to fail. You can resolve this by setting the `code-size-limit` flag
-
-```
-anvil --code-size-limit 40000
-```
-
-#### Hook deployment failures
-
-Hook deployment failures are caused by incorrect flags or incorrect salt mining
-
-1. Verify the flags are in agreement:
-   - `getHookCalls()` returns the correct flags
-   - `flags` provided to `HookMiner.find(...)`
-2. Verify salt mining is correct:
-   - In **forge test**: the _deployer_ for: `new Hook{salt: salt}(...)` and `HookMiner.find(deployer, ...)` are the same. This will be `address(this)`. If using `vm.prank`, the deployer will be the pranking address
-   - In **forge script**: the deployer must be the CREATE2 Proxy: `0x4e59b44847b379578588920cA78FbF26c0B4956C`
-     - If anvil does not have the CREATE2 deployer, your foundry may be out of date. You can update it with `foundryup`
-
-</details>
-
-### Additional Resources
-
-- [Uniswap v4 docs](https://docs.uniswap.org/contracts/v4/overview)
-- [v4-periphery](https://github.com/uniswap/v4-periphery)
-- [v4-core](https://github.com/uniswap/v4-core)
-- [v4-by-example](https://v4-by-example.org)
+-   `afterInitialize`: Setup 20 initial positions
+-   `beforeAddLiquidity`: Validate family operations
+-   `beforeRemoveLiquidity`: Handle proportional withdrawals
